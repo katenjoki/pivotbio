@@ -5,25 +5,45 @@ import os
 AGRO_DATAPATH = "data/agronomist"
 DW_DATAPATH ="data/data_warehouse/dw_data.csv"
 
-'''the get_data function loops through all the csv files in our agronomist data path,melts each dataframe so as to create new 
-columns 'variable' and 'value_agronomist' which contain the response variable and values per response variables respectively
-It merges the 2 datasets and returns the relevant files stored in a csv file'''
+'''the get_data function loops through all the csv files in our agronomist data path,melts each dataframe
+so as to create new columns 'variable' and 'value_agronomist' which contain the response variable and values
+per response variables respectively 
+It merges the 2 datasets and returns the relevant files stored in a new csv file'''
 def get_data(agro_datapath,dw_datapath):
     list_df =[]
     all_files = glob.glob(agro_datapath+ "/*.csv")
     for f in all_files:
         df_agro = pd.read_csv(f,sep=',')
+        #id_vars are the identifier variables and 
         df_agro = df_agro.melt(id_vars=['Trial ID', 'reps', 'Plot No.', 'Rate Unit', 'Appl Timing'], var_name='variable', 
         value_name="value_agronomist")
         df_agro[['variable','sample__planned_growth_stage']] = df_agro.variable.str.split(" ",expand=True)
         list_df.append(df_agro)
 
     df = pd.concat(list_df,ignore_index=True)
+    #replace all empty cells with 0
+    df = df.replace(r'^\s*$', 0, regex=True)
+    df.value_agronomist = df.value_agronomist.astype('float64')
 
     #loading the data warehouse csv file and renaming columns for uniformity
     dw = pd.read_csv("data/data_warehouse/dw_data.csv")
     dw.rename(columns={'experiment__trial_id':'Trial ID','plot__lookup_key':'Plot No.'},inplace=True)
+    dw['value_dw_adjusted'] = dw['value']/dw['sample__items_per_sample']
 
+    #n_samples  : number of samples taken for this plot, variable & growth stage combination according to the data warehouse
+    plot = dw['Plot No.'].astype('str')
+    dw['combination'] = plot + "_" + dw['variable'] + "_" +dw['sample__planned_growth_stage'] 
+
+    combinations = dw.combination.value_counts()
+    x = []
+    for i in dw.combination:
+        for index, value in combinations.items():
+            if i == index:
+                x.append(value)
+
+    dw['n_samples'] = x
+    dw.drop(['combination'],axis=1,inplace=True)
+    
     '''merging the 2 datasets, given that we want to compare the values from both 
     Ideally both datsets should be the same'''
     data = pd.merge(dw,df,how='left',left_on=['Trial ID','Plot No.','variable','sample__planned_growth_stage'],
